@@ -1,1 +1,1 @@
-"""NULLSEC KIT Pytest Suite Package."""
+# Test package

@@ -1,30 +1,28 @@
-# ==============================================================
-# NULLSEC KIT — Defensive Security Toolkit Backend Dockerfile
-# Python 3.12 Slim Non-Root Production Container
-# ==============================================================
+# Use an official lightweight Python image
 FROM python:3.12-slim
 
-# Prevent Python from writing .pyc files and buffering stdout
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV PORT=8000
-
-# Create dedicated non-privileged user for security isolation
-RUN groupadd -r nullsec && useradd -r -g nullsec -d /app -s /sbin/nologin nullsec
-
+# Set working directory inside the container
 WORKDIR /app
 
-# Install dependencies first for Docker layer caching
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=8000
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install requirements
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application source
-COPY --chown=nullsec:nullsec . .
+# Copy the rest of the application
+COPY . .
 
-USER nullsec
-
+# Expose port (using default, overridden at runtime by Render)
 EXPOSE 8000
 
-# Bind to 0.0.0.0 and dynamic $PORT required by Render/cloud platforms
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Start application
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT}

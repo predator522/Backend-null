@@ -1,100 +1,60 @@
-"""
-Centralized FastAPI Error Handlers.
-Guarantees consistent JSON error payload without stack trace leakage.
-"""
-
 from fastapi import FastAPI, Request
-from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi.exceptions import RequestValidationError
+from app.core.exceptions import NullsecError
+from app.utils.logging import log_error_safe, logger
 
-from app.core.exceptions import NullSecException
-from app.utils.logging import logger
-
-
-def register_exception_handlers(app: FastAPI) -> None:
-    """Attach global exception handlers to FastAPI application."""
-
-    @app.exception_handler(NullSecException)
-    async def nullsec_exception_handler(
-        request: Request, exc: NullSecException
-    ) -> JSONResponse:
-        logger.warning(
-            "Domain exception raised: %s (%s)",
-            exc.code,
-            exc.message,
-            extra={"endpoint": request.url.path},
-        )
+def register_error_handlers(app: FastAPI):
+    """Register global exception handlers on the FastAPI application."""
+    
+    @app.exception_handler(NullsecError)
+    async def nullsec_exception_handler(request: Request, exc: NullsecError):
+        log_error_safe(exc.code, exc.message, exc)
         return JSONResponse(
             status_code=exc.status_code,
             content={
                 "success": False,
                 "error": {
                     "code": exc.code,
-                    "message": exc.message,
-                },
-            },
+                    "message": exc.message
+                }
+            }
         )
 
     @app.exception_handler(RequestValidationError)
-    async def validation_exception_handler(
-        request: Request, exc: RequestValidationError
-    ) -> JSONResponse:
-        # Extract first human-friendly validation error message
+    async def validation_exception_handler(request: Request, exc: RequestValidationError):
+        # Extract the details of validation failure and present a clean error
         errors = exc.errors()
-        first_error = errors[0] if errors else {}
-        message = first_error.get("msg", "Request validation failed.")
-        loc = first_error.get("loc", ())
-        field_name = str(loc[-1]) if loc else "input"
-
+        message = "Input validation failed."
+        if errors:
+            # Construct a clear, descriptive message based on the first error
+            err = errors[0]
+            loc = " -> ".join(str(l) for l in err.get("loc", []))
+            msg = err.get("msg", "invalid input")
+            message = f"Validation failed at '{loc}': {msg}"
+            
+        log_error_safe("VALIDATION_ERROR", message, exc)
         return JSONResponse(
-            status_code=422,
+            status_code=400,
             content={
                 "success": False,
                 "error": {
                     "code": "INVALID_TARGET",
-                    "message": f"Validation error on '{field_name}': {message}",
-                },
-            },
-        )
-
-    @app.exception_handler(StarletteHTTPException)
-    async def http_exception_handler(
-        request: Request, exc: StarletteHTTPException
-    ) -> JSONResponse:
-        code_map = {
-            404: "NOT_FOUND",
-            405: "METHOD_NOT_ALLOWED",
-            429: "RATE_LIMIT_EXCEEDED",
-        }
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={
-                "success": False,
-                "error": {
-                    "code": code_map.get(exc.status_code, f"HTTP_{exc.status_code}"),
-                    "message": str(exc.detail),
-                },
-            },
+                    "message": message
+                }
+            }
         )
 
     @app.exception_handler(Exception)
-    async def unhandled_exception_handler(
-        request: Request, exc: Exception
-    ) -> JSONResponse:
-        logger.error(
-            "Unhandled internal exception on %s: %s",
-            request.url.path,
-            type(exc).__name__,
-            exc_info=True,
-        )
+    async def generic_exception_handler(request: Request, exc: Exception):
+        log_error_safe("INTERNAL_ERROR", "An unexpected error occurred on the server.", exc)
         return JSONResponse(
             status_code=500,
             content={
                 "success": False,
                 "error": {
-                    "code": "INTERNAL_SERVER_ERROR",
-                    "message": "An unexpected defensive toolkit error occurred.",
-                },
-            },
+                    "code": "INTERNAL_ERROR",
+                    "message": "An unexpected server error occurred. Please try again later."
+                }
+            }
         )

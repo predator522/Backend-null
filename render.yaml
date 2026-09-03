@@ -4,24 +4,18 @@ services:
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    plan: starter
-    healthCheckPath: /api/v1/health
     envVars:
       - key: APP_ENV
         value: production
-      - key: HOST
-        value: 0.0.0.0
-      - key: PORT
-        value: 10000
+      - key: LOG_LEVEL
+        value: INFO
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "30"
+      - key: MONGODB_DATABASE
+        value: nullsec_kit
       - key: FRONTEND_URL
         sync: false
       - key: MONGODB_URI
         sync: false
-      - key: MONGODB_DATABASE
-        value: nullsec_kit
       - key: REDIS_URL
         sync: false
-      - key: RATE_LIMIT_PER_MINUTE
-        value: 30
-      - key: LOG_LEVEL
-        value: INFO

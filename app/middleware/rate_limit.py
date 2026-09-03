@@ -1,79 +1,48 @@
-"""
-Defensive Rate Limiting Middleware.
-Protects assessment endpoints from abusive bursts using a sliding window.
-"""
-
 import time
-from collections import defaultdict
-from threading import Lock
-from typing import Dict, List, Tuple
 from fastapi import Request
-from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.responses import Response
+from app.config.settings import settings
+from app.database.redis import get_redis
+from app.core.exceptions import RateLimitError
+from app.utils.logging import logger
 
-from app.config.settings import get_settings
+class RateLimiter:
+    """FastAPI Rate Limiting Dependency."""
+    def __init__(self, limit: int = None, window_seconds: int = 60):
+        self.limit = limit or settings.RATE_LIMIT_PER_MINUTE
+        self.window_seconds = window_seconds
 
-
-class RateLimitMiddleware(BaseHTTPMiddleware):
-    """
-    Sliding window in-memory rate limiter per IP address.
-    Configurable via RATE_LIMIT_PER_MINUTE environment setting.
-    """
-
-    def __init__(self, app: BaseHTTPMiddleware) -> None:
-        super().__init__(app)
-        self._lock = Lock()
-        self._requests: Dict[str, List[float]] = defaultdict(list)
-
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
-        # Skip rate limit on documentation and CORS preflight
-        if request.method == "OPTIONS" or request.url.path in (
-            "/docs",
-            "/redoc",
-            "/openapi.json",
-        ):
-            return await call_next(request)
-
-        settings = get_settings()
-        limit = settings.RATE_LIMIT_PER_MINUTE
-        client_ip = (
-            request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-            or (request.client.host if request.client else "127.0.0.1")
-        )
-        now = time.time()
-        window_start = now - 60.0
-
-        with self._lock:
-            # Prune old timestamps
-            self._requests[client_ip] = [
-                ts for ts in self._requests[client_ip] if ts > window_start
-            ]
-            current_count = len(self._requests[client_ip])
-
-            if current_count >= limit:
-                return JSONResponse(
-                    status_code=429,
-                    content={
-                        "success": False,
-                        "error": {
-                            "code": "RATE_LIMIT_EXCEEDED",
-                            "message": f"Exceeded maximum {limit} requests per minute.",
-                        },
-                    },
-                    headers={
-                        "Retry-After": "60",
-                        "X-RateLimit-Limit": str(limit),
-                        "X-RateLimit-Remaining": "0",
-                    },
-                )
-
-            self._requests[client_ip].append(now)
-            remaining = max(0, limit - current_count - 1)
-
-        response = await call_next(request)
-        response.headers["X-RateLimit-Limit"] = str(limit)
-        response.headers["X-RateLimit-Remaining"] = str(remaining)
-        return response
+    async def __call__(self, request: Request):
+        # Determine client identifier (use IP or proxy forward header)
+        client_ip = request.client.host if request.client else "unknown"
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            client_ip = forwarded_for.split(",")[0].strip()
+            
+        endpoint = request.url.path
+        rate_key = f"rate_limit:{client_ip}:{endpoint}"
+        
+        redis_client = get_redis()
+        
+        try:
+            current_count_str = redis_client.get(rate_key)
+            if current_count_str is None:
+                # Key doesn't exist, create it with expiry
+                redis_client.setex(rate_key, self.window_seconds, "1")
+                current_count = 1
+            else:
+                current_count = int(current_count_str)
+                if current_count >= self.limit:
+                    ttl = redis_client.ttl(rate_key)
+                    ttl = max(0, ttl)
+                    raise RateLimitError(
+                        f"Rate limit of {self.limit} requests per {self.window_seconds}s exceeded. "
+                        f"Please retry in {ttl} seconds."
+                    )
+                # Increment
+                redis_client.incr(rate_key)
+        except RateLimitError:
+            raise
+        except Exception as e:
+            # If Redis or rate limit logic fails catastrophically, we fail open but log it so service is not disrupted
+            logger.error(f"Rate limiter exception (failing open): {e}")
+            pass

@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from app.config.settings import settings
+from app.config.settings import Settings
 from app.api.router import api_router
 from app.middleware.cors import setup_cors_middleware
 from app.middleware.security import setup_security_middleware

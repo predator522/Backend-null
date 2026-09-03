@@ -1,71 +1,46 @@
-"""
-NULLSEC KIT Backend Application Entrypoint (app/main.py).
-Responsible exclusively for application bootstrap, middleware setup,
-router registration, and graceful database lifecycle hooks.
-"""
-
-from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
-
+from contextlib import asynccontextmanager
+from app.config.settings import settings
 from app.api.router import api_router
-from app.config.settings import get_settings
-from app.database.mongodb import connect_mongodb, close_mongodb
-from app.database.redis import connect_redis, close_redis
-from app.middleware.cors import configure_cors
-from app.middleware.rate_limit import RateLimitMiddleware
-from app.middleware.security import SecurityHeadersMiddleware
-from app.utils.errors import register_exception_handlers
+from app.middleware.cors import setup_cors_middleware
+from app.middleware.security import setup_security_middleware
+from app.utils.errors import register_error_handlers
+from app.database.mongodb import db_manager
+from app.database.redis import redis_manager
 from app.utils.logging import logger
 
-
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Startup and shutdown lifecycle hooks for NULLSEC KIT backend."""
-    logger.info("Bootstrapping NULLSEC KIT defensive security engine...")
-    await connect_mongodb()
-    await connect_redis()
+async def lifespan(app: FastAPI):
+    """Lifecycle events management for startup and shutdown actions."""
+    logger.info("Initializing NULLSEC KIT defensive backend...")
+    
+    # Pre-warm database connections (falls back to mock structures if offline)
+    db_manager.connect()
+    redis_manager.connect()
+    
     yield
-    logger.info("Shutting down NULLSEC KIT backend...")
-    await close_mongodb()
-    await close_redis()
+    
+    logger.info("Shutting down NULLSEC KIT defensive backend.")
 
+app = FastAPI(
+    title=settings.APP_NAME,
+    description=(
+        "NULLSEC KIT - A highly secured, passive defensive security toolkit and "
+        "authorized-assessment API. Provides robust verification of DNS, headers, CORS, "
+        "TLS and cryptography assets."
+    ),
+    version="1.0.0",
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
 
-def create_application() -> FastAPI:
-    """Create and configure the production FastAPI application instance."""
-    settings = get_settings()
+# Set up middlewares
+setup_cors_middleware(app)
+setup_security_middleware(app)
 
-    app = FastAPI(
-        title=settings.APP_NAME,
-        version=settings.APP_VERSION,
-        description=(
-            "NULLSEC KIT — Defensive Security Research & Authorized Assessment Toolkit. "
-            "Exposes modular passive reconnaissance and security posture inspection APIs."
-        ),
-        docs_url="/docs",
-        redoc_url="/redoc",
-        openapi_url="/openapi.json",
-        lifespan=lifespan,
-    )
+# Register central error handling
+register_error_handlers(app)
 
-    # 1. Global Exception Handlers
-    register_exception_handlers(app)
-
-    # 2. Defensive Middleware Stack
-    configure_cors(app, settings)
-    app.add_middleware(SecurityHeadersMiddleware)
-    app.add_middleware(RateLimitMiddleware)
-
-    # 3. Register Versioned API Routes (/api/v1/*)
-    app.include_router(api_router)
-
-    # Optional root convenience redirect to /docs
-    @app.get("/", include_in_schema=False)
-    async def root() -> RedirectResponse:
-        return RedirectResponse(url="/docs")
-
-    return app
-
-
-app = create_application()
+# Register main API routing structure
+app.include_router(api_router, prefix="/api/v1")

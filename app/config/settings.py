@@ -1,19 +1,22 @@
 import os
-from pydantic import BaseModel
+from functools import lru_cache
+
 from dotenv import load_dotenv
+from pydantic import BaseModel
 
 load_dotenv()
 
 
 class Settings(BaseModel):
-    APP_NAME: str = "NULLSEC KIT API"
+    APP_NAME: str = os.getenv("APP_NAME", "NULLSEC KIT API")
     APP_ENV: str = os.getenv("APP_ENV", "development")
+
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))
 
     FRONTEND_URL: str = os.getenv(
         "FRONTEND_URL",
-        "http://localhost:3000"
+        "http://localhost:3000,http://127.0.0.1:3000"
     )
 
     MONGODB_URI: str = os.getenv("MONGODB_URI", "")
@@ -43,4 +46,9 @@ class Settings(BaseModel):
     ]
 
 
-settings = Settings()
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+
+
+settings = get_settings()

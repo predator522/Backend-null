@@ -1,60 +1,26 @@
-"""
-DNS Lookup Request & Response Pydantic Schemas (Phase 2).
-Enforces exact response contract:
-{
-    "success": true,
-    "domain": "example.com",
-    "records": {
-        "A": [],
-        "AAAA": [],
-        "MX": [],
-        "NS": [],
-        "TXT": [],
-        "CNAME": [],
-        "SOA": []
-    }
-}
-"""
-
-from typing import Any, Dict, List
 from pydantic import BaseModel, Field, field_validator
-from app.utils.validation import validate_domain
-
+from app.utils.validation import validate_domain_only
+from app.schemas.common import ErrorDetail
 
 class DNSLookupRequest(BaseModel):
-    """Payload for POST /api/v1/dns/lookup."""
-
-    domain: str = Field(
-        ...,
-        json_schema_extra={"example": "example.com"},
-        description="Public domain target to inspect (FQDN without trailing period)",
-    )
+    domain: str = Field(..., description="The public domain name to query", examples=["example.com"])
 
     @field_validator("domain")
     @classmethod
-    def sanitize_and_validate_domain(cls, value: str) -> str:
-        """Validate FQDN syntax and enforce SSRF protections."""
-        return validate_domain(value)
+    def validate_dns_domain(cls, val: str) -> str:
+        return validate_domain_only(val)
 
-
-class DNSRecordsMap(BaseModel):
-    """Complete map of supported DNS resource record types."""
-
-    A: List[str] = Field(default_factory=list)
-    AAAA: List[str] = Field(default_factory=list)
-    MX: List[str] = Field(default_factory=list)
-    NS: List[str] = Field(default_factory=list)
-    TXT: List[str] = Field(default_factory=list)
-    CNAME: List[str] = Field(default_factory=list)
-    SOA: List[str] = Field(default_factory=list)
-
+class DNSRecords(BaseModel):
+    A: list[str] = Field(default_factory=list, description="A IPv4 address records")
+    AAAA: list[str] = Field(default_factory=list, description="AAAA IPv6 address records")
+    MX: list[str] = Field(default_factory=list, description="Mail exchanger records")
+    NS: list[str] = Field(default_factory=list, description="Name server records")
+    TXT: list[str] = Field(default_factory=list, description="Text records")
+    CNAME: list[str] = Field(default_factory=list, description="Canonical name records")
+    SOA: list[str] = Field(default_factory=list, description="Start of Authority records")
 
 class DNSLookupResponse(BaseModel):
-    """Structured response returned by POST /api/v1/dns/lookup."""
-
-    success: bool = Field(default=True)
-    domain: str = Field(..., json_schema_extra={"example": "example.com"})
-    records: DNSRecordsMap
-    query_duration_ms: float = Field(
-        default=0.0, description="Total resolver elapsed time in milliseconds"
-    )
+    success: bool = Field(True, description="Indicates if the query was successful")
+    domain: str = Field(..., description="The queried domain name")
+    records: DNSRecords = Field(..., description="Grouped collection of DNS record results")
+    error: ErrorDetail | None = Field(None, description="Detailed error information, if failed")

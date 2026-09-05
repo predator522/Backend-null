@@ -1,1 +1,1 @@
-"""Reports Service package (Phase 5 placeholder)."""
+from app.services.reports.service import ReportsService

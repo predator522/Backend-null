@@ -2,7 +2,7 @@
 
 NULLSEC KIT is a professional web-based passive defensive security toolkit and authorized-assessment API. Built using Python 3.12, FastAPI, and Pydantic, the backend delivers high-performance, modular, secure, and production-ready security tools.
 
-This repository covers **Phase 1 (Foundation)** and **Phase 2 (DNS Lookup)**.
+This repository contains the consolidated NULLSEC KIT defensive backend, including DNS, WHOIS, IP intelligence, HTTP analysis, headers, cookies, CORS, TLS, cryptography utilities, CVE lookup, reports, and unified analysis.
 
 ---
 

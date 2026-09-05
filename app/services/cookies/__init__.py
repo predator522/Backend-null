@@ -1,1 +1,1 @@
-"""Cookie Analysis Service package (Phase 4 placeholder)."""
+from app.services.cookies.service import CookiesService

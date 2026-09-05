@@ -1,176 +1,71 @@
-"""
-Defensive Security Input & Target Validation Utilities.
-Protects against SSRF, internal host enumeration, and malformed inputs.
-"""
-
-import ipaddress
-import re
-from typing import Set
+import re, socket, ipaddress
 from urllib.parse import urlparse
+from app.config.settings import settings
+from app.core.exceptions import ValidationError, SSRFError
 
-from app.core.exceptions import InvalidTargetException, SSRFBlockedException
+DOMAIN_REGEX = re.compile(r"^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$")
+CVE_REGEX = re.compile(r"^CVE-\d{4}-\d{4,}$", re.IGNORECASE)
 
-# Regex pattern for RFC 1035 valid FQDN / domain name
-DOMAIN_REGEX = re.compile(
-    r"^(?:[a-zA-Z0-9]"
-    r"(?:[a-zA-Z0-9-_]{0,61}[a-zA-Z0-9])?\.)+"
-    r"[a-zA-Z]{2,63}$"
-)
+def is_valid_domain(domain: str) -> bool:
+    if not domain: return False
+    d = domain.strip().lower().rstrip('.')
+    if d in {"localhost", "loopback", "local"} or d.endswith((".local", ".internal", ".onion")): return False
+    return bool(DOMAIN_REGEX.fullmatch(d))
 
-# CVE ID format (e.g., CVE-2024-12345)
-CVE_REGEX = re.compile(r"^CVE-\d{4}-\d{4,7}$", re.IGNORECASE)
+def is_valid_ip(ip_str: str) -> bool:
+    try: ipaddress.ip_address(ip_str.strip()); return True
+    except ValueError: return False
 
-# Forbidden internal/private TLDs and hostnames
-FORBIDDEN_DOMAINS: Set[str] = {
-    "localhost",
-    "localhost.localdomain",
-    "metadata.google.internal",
-    "instance-data",
-}
-
-FORBIDDEN_TLDS: Set[str] = {
-    ".local",
-    ".internal",
-    ".lan",
-    ".home",
-    ".corp",
-    ".intranet",
-    ".test",
-    ".localhost",
-}
-
-CLOUD_METADATA_IPS: Set[str] = {
-    "169.254.169.254",
-    "fd00:ec2::254",
-}
-
-
-def is_private_or_loopback_ip(ip_str: str) -> bool:
-    """
-    Check if a string is an IP address that falls into private, loopback,
-    link-local, multicast, or unspecified ranges.
-    """
+def is_private_ip(ip_str: str) -> bool:
     try:
-        ip_obj = ipaddress.ip_address(ip_str)
-        return (
-            ip_obj.is_private
-            or ip_obj.is_loopback
-            or ip_obj.is_link_local
-            or ip_obj.is_multicast
-            or ip_obj.is_unspecified
-            or ip_str in CLOUD_METADATA_IPS
-        )
-    except ValueError:
-        return False
+        ip = ipaddress.ip_address(ip_str.strip())
+        if any((ip.is_private, ip.is_loopback, ip.is_link_local, ip.is_multicast, ip.is_unspecified, ip.is_reserved)): return True
+        return any(ip in ipaddress.ip_network(r, strict=False) for r in settings.BLOCKED_IP_RANGES)
+    except ValueError: return True
 
+def validate_domain_or_ip(target: str) -> str:
+    target = target.strip()
+    if is_valid_ip(target):
+        if is_private_ip(target): raise ValidationError("Target is a private or restricted IP address.")
+        return target
+    if is_valid_domain(target): return target.rstrip('.').lower()
+    raise ValidationError("Target must be a valid public domain or public IP address.")
 
-def validate_domain(domain: str) -> str:
-    """
-    Validate and sanitize a domain name target.
-    Rejects:
-    - IP addresses (direct IPv4/IPv6 private or public literals)
-    - Localhost or internal TLDs (.local, .internal, .lan)
-    - Cloud metadata hostnames
-    - Malformed domain strings with injection characters
-    Returns lowercase normalized domain without trailing period.
-    """
-    if not domain or not isinstance(domain, str):
-        raise InvalidTargetException("Domain must be a non-empty string.")
+def validate_domain_only(domain: str) -> str:
+    domain = domain.strip().rstrip('.').lower()
+    if not is_valid_domain(domain): raise ValidationError("Input must be a valid public domain name.")
+    return domain
 
-    cleaned = domain.strip().lower().rstrip(".")
-
-    if len(cleaned) > 253:
-        raise InvalidTargetException("Domain exceeds maximum length of 253 characters.")
-
-    # Reject cloud metadata or explicit forbidden hosts
-    if cleaned in FORBIDDEN_DOMAINS or cleaned in CLOUD_METADATA_IPS:
-        raise SSRFBlockedException("Target domain is a restricted internal or metadata host.")
-
-    # Check forbidden suffixes (.local, .internal, etc.)
-    for tld in FORBIDDEN_TLDS:
-        if cleaned.endswith(tld):
-            raise SSRFBlockedException(
-                f"Target domain TLD '{tld}' is restricted to internal networks."
-            )
-
-    # Check if the user passed an IP literal (IPv4 or IPv6)
-    try:
-        ip_obj = ipaddress.ip_address(cleaned)
-        if is_private_or_loopback_ip(cleaned):
-            raise SSRFBlockedException(
-                f"IP address '{cleaned}' is private/loopback and blocked by SSRF policy."
-            )
-        raise InvalidTargetException(
-            "Expected a domain name (FQDN), received an IP address literal."
-        )
-    except ValueError:
-        pass  # Not an IP literal, proceed to domain regex
-
-    if not DOMAIN_REGEX.match(cleaned):
-        raise InvalidTargetException(
-            f"The supplied target '{domain}' is not a valid domain name."
-        )
-
-    return cleaned
-
-
-def validate_ip_public(ip_str: str) -> str:
-    """
-    Validate an IPv4 or IPv6 string and ensure it is not private/loopback/metadata.
-    """
-    if not ip_str or not isinstance(ip_str, str):
-        raise InvalidTargetException("IP address must be a non-empty string.")
-
-    cleaned = ip_str.strip()
-    try:
-        ip_obj = ipaddress.ip_address(cleaned)
-    except ValueError as exc:
-        raise InvalidTargetException(
-            f"'{ip_str}' is not a valid IPv4 or IPv6 address."
-        ) from exc
-
-    if is_private_or_loopback_ip(cleaned):
-        raise SSRFBlockedException(
-            f"IP address '{cleaned}' is internal/private and prohibited."
-        )
-
-    return str(ip_obj)
-
-
-def validate_url_target(url_str: str) -> str:
-    """
-    Validate a URL target for HTTP analysis, ensuring SSRF safety on the hostname.
-    """
-    if not url_str or not isinstance(url_str, str):
-        raise InvalidTargetException("URL must be a non-empty string.")
-
-    cleaned = url_str.strip()
-    parsed = urlparse(cleaned)
-
-    if parsed.scheme not in ("http", "https"):
-        raise InvalidTargetException(
-            "Only HTTP and HTTPS URL schemes are permitted."
-        )
-
-    hostname = parsed.hostname
-    if not hostname:
-        raise InvalidTargetException("URL must contain a valid hostname.")
-
-    # Check if hostname is an IP address
-    try:
-        ipaddress.ip_address(hostname)
-        validate_ip_public(hostname)
-    except ValueError:
-        # Hostname is a domain name
-        validate_domain(hostname)
-
-    return cleaned
-
+def validate_port(port: int) -> int:
+    if 1 <= port <= 65535: return port
+    raise ValidationError("Port must be between 1 and 65535.")
 
 def validate_cve_id(cve_id: str) -> str:
-    """Validate CVE identifier syntax (e.g. CVE-2024-12345)."""
-    if not cve_id or not CVE_REGEX.match(cve_id.strip()):
-        raise InvalidTargetException(
-            f"'{cve_id}' is not a valid CVE identifier (expected CVE-YYYY-NNNNN)."
-        )
-    return cve_id.strip().upper()
+    value = cve_id.strip().upper()
+    if CVE_REGEX.fullmatch(value): return value
+    raise ValidationError("Invalid CVE format. Must match CVE-YYYY-NNNN.")
+
+def resolve_public_ips(hostname: str) -> list[str]:
+    try: infos = socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc: raise ValidationError(f"Could not resolve host: {hostname}") from exc
+    ips = list(dict.fromkeys(info[4][0] for info in infos))
+    if not ips: raise ValidationError(f"Could not resolve host: {hostname}")
+    blocked = [ip for ip in ips if is_private_ip(ip)]
+    if blocked: raise SSRFError(f"Target '{hostname}' resolved to a private or restricted network.")
+    return ips
+
+def check_ssrf_and_get_ip(hostname: str) -> str:
+    return resolve_public_ips(hostname)[0]
+
+def validate_url_safe(url: str) -> str:
+    if not url or len(url) > 2048: raise ValidationError("URL is empty or too long.")
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in ("http", "https"): raise ValidationError("URL scheme must be HTTP or HTTPS.")
+    if parsed.username or parsed.password: raise ValidationError("URLs containing embedded credentials are not allowed.")
+    hostname = parsed.hostname
+    if not hostname: raise ValidationError("URL must contain a valid hostname.")
+    if is_valid_ip(hostname):
+        if is_private_ip(hostname): raise SSRFError("URL hostname is private or restricted.")
+    elif not is_valid_domain(hostname):
+        raise ValidationError("URL host is not a valid public domain name.")
+    return url.strip()

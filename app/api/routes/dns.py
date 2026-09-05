@@ -1,29 +1,23 @@
-"""
-DNS Lookup Route (Phase 2).
-Exposes POST /api/v1/dns/lookup and delegates to DNSLookupService.
-Routes contain zero business logic.
-"""
-
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from app.schemas.dns import DNSLookupRequest, DNSLookupResponse
-from app.services.dns.service import DNSLookupService
+from app.services.dns.service import DNSService
+from app.middleware.rate_limit import RateLimiter
 
-router = APIRouter(prefix="/dns", tags=["DNS Reconnaissance"])
+router = APIRouter()
 
+# Rate limit DNS lookups to e.g. 20 requests per minute
+dns_rate_limiter = RateLimiter(limit=20, window_seconds=60)
 
-@router.post(
-    "/lookup",
-    response_model=DNSLookupResponse,
-    summary="Query DNS Resource Records",
-    description=(
-        "Non-blocking passive DNS inspection for public domain targets. "
-        "Queries A, AAAA, MX, NS, TXT, CNAME, and SOA resource records."
-    ),
-)
-async def lookup_dns(request: DNSLookupRequest) -> DNSLookupResponse:
+@router.post("/lookup", response_model=DNSLookupResponse, dependencies=[Depends(dns_rate_limiter)])
+async def dns_lookup(payload: DNSLookupRequest):
+    """Perform a passive, secure DNS record analysis for a validated public domain.
+    
+    Checks A, AAAA, MX, NS, TXT, CNAME, and SOA records.
+    Protects against internal/private infrastructure lookups (SSRF).
     """
-    Route request payload directly to DNSLookupService.
-    Schema validation runs before service invocation.
-    """
-    service = DNSLookupService()
-    return await service.lookup(request.domain)
+    records = DNSService.lookup(payload.domain)
+    return DNSLookupResponse(
+        success=True,
+        domain=payload.domain,
+        records=records
+    )

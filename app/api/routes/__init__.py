@@ -1,1 +1,1 @@
-"""API routes package."""
+# Route handlers

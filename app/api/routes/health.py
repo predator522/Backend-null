@@ -1,29 +1,21 @@
-"""
-Healthcheck Endpoint Route (Phase 1).
-Exposes GET /api/v1/health for container orchestrators and uptime checks.
-"""
-
-from datetime import datetime, timezone
 from fastapi import APIRouter
-from app.config.settings import get_settings
-from app.schemas.common import HealthResponse
+from app.database.mongodb import db_manager
+from app.database.redis import redis_manager
 
-router = APIRouter(tags=["System Health"])
+router = APIRouter()
 
-
-@router.get(
-    "/health",
-    response_model=HealthResponse,
-    summary="Service Healthcheck",
-    description="Returns defensive security toolkit readiness status and metadata.",
-)
-async def check_health() -> HealthResponse:
-    """Return health status without executing heavy dependencies."""
-    settings = get_settings()
-    return HealthResponse(
-        status="ok",
-        service=settings.APP_NAME,
-        version=settings.APP_VERSION,
-        environment=settings.APP_ENV,
-        timestamp_utc=datetime.now(timezone.utc).isoformat(),
-    )
+@router.get("")
+async def health_check():
+    """Verify system health, environment status, and database fallback state."""
+    # Ensure connections are initiated
+    mongodb_db = db_manager.get_db()
+    redis_client = redis_manager.get_client()
+    
+    return {
+        "success": True,
+        "status": "healthy",
+        "services": {
+            "mongodb": "mocked" if db_manager.is_mock else "connected",
+            "redis": "mocked" if redis_manager.is_mock else "connected"
+        }
+    }

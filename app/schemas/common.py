@@ -1,31 +1,26 @@
-"""
-Common API Response Schemas for NULLSEC KIT.
-Guarantees consistent JSON output structure across all defensive tools.
-"""
-
-from typing import Any, Dict, Optional
-from pydantic import BaseModel, Field
-
-
-class HealthResponse(BaseModel):
-    """Healthcheck endpoint status schema."""
-
-    status: str = Field(default="ok", description="Service health state")
-    service: str = Field(default="NULLSEC KIT", description="Toolkit identifier")
-    version: str = Field(default="1.0.0", description="API version")
-    environment: str = Field(default="development", description="Runtime environment")
-    timestamp_utc: str = Field(description="ISO 8601 UTC timestamp")
-
+from pydantic import BaseModel, Field, field_validator
+from app.utils.validation import validate_domain_or_ip, validate_port
 
 class ErrorDetail(BaseModel):
-    """Standardized error code and message object."""
+    code: str = Field(..., description="Unique error code identifier")
+    message: str = Field(..., description="Descriptive error explanation")
 
-    code: str = Field(description="Machine-readable error identifier")
-    message: str = Field(description="Safe human-readable error summary")
+class BaseResponse(BaseModel):
+    success: bool = Field(True, description="Indicates if the API request was successful")
+    error: ErrorDetail | None = Field(None, description="Error detail if success is False")
 
+class TargetInput(BaseModel):
+    target: str = Field(..., description="Target public domain or public IP address", examples=["example.com", "8.8.8.8"])
 
-class ErrorResponse(BaseModel):
-    """Top-level error response envelope returned by global exception handlers."""
+    @field_validator("target")
+    @classmethod
+    def validate_target(cls, val: str) -> str:
+        return validate_domain_or_ip(val)
 
-    success: bool = Field(default=False)
-    error: ErrorDetail
+class PortInput(BaseModel):
+    port: int = Field(..., description="Port number between 1 and 65535", examples=[443])
+
+    @field_validator("port")
+    @classmethod
+    def validate_port_number(cls, val: int) -> int:
+        return validate_port(val)

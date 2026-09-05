@@ -1,86 +1,37 @@
-"""
-Domain exception hierarchy for NULLSEC KIT.
-Prevents leaking stack traces or internal implementation details.
-"""
-
-from typing import Any, Dict, Optional
-
-
-class NullSecException(Exception):
-    """
-    Base exception class for NULLSEC KIT.
-    Maps to standardized error JSON response format:
-    {
-        "success": false,
-        "error": {
-            "code": "ERROR_CODE",
-            "message": "Human safe description"
-        }
-    }
-    """
-
-    def __init__(
-        self,
-        code: str,
-        message: str,
-        status_code: int = 400,
-        details: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        super().__init__(message)
+class NullsecError(Exception):
+    """Base exception for all NULLSEC KIT errors."""
+    def __init__(self, code: str, message: str, status_code: int = 400):
         self.code = code
         self.message = message
         self.status_code = status_code
-        self.details = details or {}
+        super().__init__(self.message)
 
+class ValidationError(NullsecError):
+    """Raised when request validation fails (e.g. invalid target, port)."""
+    def __init__(self, message: str = "The supplied target or parameter is invalid."):
+        super().__init__(code="INVALID_TARGET", message=message, status_code=400)
 
-class InvalidTargetException(NullSecException):
-    """Raised when target domain, IP, or URL fails syntax or policy checks."""
+class SSRFError(NullsecError):
+    """Raised when an SSRF attempt is detected."""
+    def __init__(self, message: str = "The requested target resolved to a private or restricted network."):
+        super().__init__(code="SSRF_DETECTED", message=message, status_code=403)
 
-    def __init__(self, message: str = "The supplied target is invalid.") -> None:
-        super().__init__(
-            code="INVALID_TARGET",
-            message=message,
-            status_code=400,
-        )
+class DNSError(NullsecError):
+    """Raised when a DNS operation fails or returns no results."""
+    def __init__(self, message: str = "DNS resolution failed."):
+        super().__init__(code="DNS_ERROR", message=message, status_code=400)
 
+class RateLimitError(NullsecError):
+    """Raised when a client exceeds rate limits."""
+    def __init__(self, message: str = "Rate limit exceeded. Please slow down."):
+        super().__init__(code="RATE_LIMIT_EXCEEDED", message=message, status_code=429)
 
-class SSRFBlockedException(NullSecException):
-    """Raised when target resolves to loopback, private, or metadata IPs."""
+class DatabaseError(NullsecError):
+    """Raised when there's an issue contacting MongoDB or Redis."""
+    def __init__(self, message: str = "Database operation failed."):
+        super().__init__(code="DATABASE_ERROR", message=message, status_code=500)
 
-    def __init__(
-        self,
-        message: str = "Target blocked: internal or non-public destination not allowed.",
-    ) -> None:
-        super().__init__(
-            code="SSRF_BLOCKED",
-            message=message,
-            status_code=403,
-        )
-
-
-class RateLimitExceededException(NullSecException):
-    """Raised when client exceeds rate limit thresholds."""
-
-    def __init__(
-        self,
-        message: str = "Rate limit exceeded. Please slow down requests.",
-    ) -> None:
-        super().__init__(
-            code="RATE_LIMIT_EXCEEDED",
-            message=message,
-            status_code=429,
-        )
-
-
-class DNSLookupException(NullSecException):
-    """Raised when a fatal DNS service error occurs."""
-
-    def __init__(
-        self,
-        message: str = "DNS query failed due to resolver timeout or network error.",
-    ) -> None:
-        super().__init__(
-            code="DNS_LOOKUP_ERROR",
-            message=message,
-            status_code=502,
-        )
+class ServiceUnavailableError(NullsecError):
+    """Raised when a required external or persistence service is unavailable."""
+    def __init__(self, message: str = "A required service is temporarily unavailable."):
+        super().__init__(code="SERVICE_UNAVAILABLE", message=message, status_code=503)

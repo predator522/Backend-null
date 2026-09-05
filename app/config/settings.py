@@ -10,7 +10,6 @@ load_dotenv()
 class Settings(BaseModel):
     APP_NAME: str = os.getenv("APP_NAME", "NULLSEC KIT API")
     APP_ENV: str = os.getenv("APP_ENV", "development")
-
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))
 
@@ -20,17 +19,10 @@ class Settings(BaseModel):
     )
 
     MONGODB_URI: str = os.getenv("MONGODB_URI", "")
-    MONGODB_DATABASE: str = os.getenv(
-        "MONGODB_DATABASE",
-        "nullsec_kit"
-    )
+    MONGODB_DATABASE: str = os.getenv("MONGODB_DATABASE", "nullsec_kit")
 
     REDIS_URL: str = os.getenv("REDIS_URL", "")
-
-    RATE_LIMIT_PER_MINUTE: int = int(
-        os.getenv("RATE_LIMIT_PER_MINUTE", "30")
-    )
-
+    RATE_LIMIT_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_PER_MINUTE", "30"))
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
     BLOCKED_IP_RANGES: list[str] = [
@@ -46,7 +38,7 @@ class Settings(BaseModel):
     ]
 
 
-@lru_cache
+@lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
 

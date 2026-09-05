@@ -1,1 +1,1 @@
-"""TLS Inspector Service package (Phase 3 placeholder)."""
+from app.services.tls.service import TlsService
